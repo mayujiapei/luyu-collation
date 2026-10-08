@@ -22,6 +22,19 @@
 
 ## 怎么跑
 
+**推荐：用执行器一次跑完**（读 `.env` 里的真实密钥，产生真实调用费用）：
+
+```bash
+./.venv/Scripts/python.exe -m server.tests.run_regression             # 全部 8 条
+./.venv/Scripts/python.exe -m server.tests.run_regression --verbose    # 附带每条建议内容
+./.venv/Scripts/python.exe -m server.tests.run_regression --only reg-005
+```
+
+它逐条核对 `mustFind` / `minItems` / `maxItems` / 类型合法性，打印实际输出与耗时；
+全部通过时退出码 0，可直接挂进演示前的冒烟流程。
+
+**手动核对**：
+
 1. 起后端（`npm run dev:server`），确认 `/api/v1/health` 返回 `status: ok`、`LLM_API_KEY` 已配置。
 2. 逐条把 `source` 原文粘进首页「粘贴原文」，或直接调接口：
 
@@ -37,6 +50,9 @@
 
 ## 注意
 
+- **上游报错先看错误消息里的状态码**：本项目会把上游非 2xx 归口成 `PROVIDER_MISCONFIGURED`，
+  并在 `message` 里带上游状态码与响应摘要。若看到 `HTTP 402 ... balance is insufficient`，
+  那是模型账号余额不足（不是密钥错、也不是代码问题），充值后重跑即可。
 - 用例文本为公共版权古籍通行本短选段，只作 Prompt 输入，不作校勘底本，不参与任何对外的
   准确率宣称；对外的指标一律以 `docs/EVAL.md` 定义的评测集为准。
 - 用例使用简体输入。系统对繁体输入同样适用（前端默认以繁体展示），但本回归集暂不含繁体用例。

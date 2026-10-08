@@ -54,6 +54,11 @@
 | 校勘类型 | 五类固定：讹字、衍文、脱文、通假、异文 |
 | 数据库 | 阶段一无持久化，无状态（阶段二才引入 SQLite） |
 
+> 大模型接入现状（2026-10-08）：演示与联调实际走的是**硅基流动（SiliconFlow）** 的 OpenAI 兼容端点
+> （原因见 §7）。选型结论不变——仍是「OpenAI 兼容接口 + 环境变量切换」，换回通义千问或 DeepSeek
+> 只需改 `LLM_PROVIDER` / `LLM_BASE_URL` / `LLM_MODEL` 三个环境变量，代码零改动；
+> 但写技术方案时要注意口径与实际一致，不要声称主用了没实际跑过的供应商。
+
 ## 6. 阶段一实施顺序与两份未写文档
 
 按依赖关系排序，不设日历日期：
@@ -90,16 +95,34 @@
 断网时首页与校勘页均有明确提示（含错误码与处理建议），未白屏、未渲染脏数据；主链路已无硬编码演示数据。
 **注意**：其中"模型返回建议"这一环是用本地假模型端点验证的，**真实模型尚未接通**，见下。
 
-### 遗留验证（下一步第一件事必须做）
+### 遗留验证（真实模型）
 
-- 上游**真实模型尚未接通验证**。模型调用是用明确标记的本地假模型端点
-  （`server/tests/fake_llm_provider.py`，仅测试/联调，生产代码不引用）验证的，
-  覆盖了「请求 → Prompt 组装 → 上游调用 → JSON 提取 → schema 校验 → 原文定位/去重 →
-  置信度规则修正 → 响应」整条真实代码路径与全部降级分支；但**真实模型返回的建议质量**未经确认。
-  开工第一件事：填入真实 `LLM_API_KEY`，按 `server/prompts/regression/` 的用例跑一遍，
-  核对 `mustFind` 与 `minItems/maxItems`，并记录 `droppedCount`。
-- 若真实模型的 `reason` 字段经常缺失，会被 schema 闸门整条丢弃（表现为
-  `items` 很少而 `droppedCount` 很大）——此时该调 `collate_v1.md` 的输出约束，而不是放宽校验。
+**已接通并部分验证（2026-10-08）**：真实供应商已接上——**硅基流动（SiliconFlow）** 的 OpenAI 兼容端点。
+只加了 4 个环境变量、**未改任何代码**，正好验证了「供应商可插拔」的设计（TECH_DESIGN §2）。
+接入方式记在这里以免下次重找：
+
+```
+LLM_PROVIDER=siliconflow                      # 名字随意，无内置默认值时必须显式给下面两项
+LLM_BASE_URL=https://api.siliconflow.cn/v1
+LLM_MODEL=deepseek-ai/DeepSeek-V3.2
+```
+
+已完成的 5 次真实调用（`deepseek-ai/DeepSeek-V3.2`）表现正常：
+reg-001～004 四条干净对照文本均返回 **0 条建议**（无误报）；
+reg-005 正确检出注入的形近误字「代 → 伐」，判为讹字、理由引用通行本《左传》，
+置信度 0.95 经形近表修正为 1.0，`offset` 由后端重算为 6，`droppedCount=0`。
+
+**仍待完成**：reg-006（脱文）、reg-007（衍文）、reg-008（通假）三条注入用例未跑——
+**阻塞在账号余额**：余额耗尽后其余调用全部返回 `HTTP 402 ... balance is insufficient`
+（前端显示为 `PROVIDER_MISCONFIGURED` 并带上游状态码，属预期行为）。充值后执行：
+
+```
+./.venv/Scripts/python.exe -m server.tests.run_regression
+```
+
+**另需留意**：若真实模型的 `reason` 字段经常缺失，会被 schema 闸门整条丢弃
+（表现为 `items` 很少而 `droppedCount` 很大）——此时该调 `collate_v1.md` 的输出约束，
+而不是放宽校验。
 
 ## 8. 环境备忘
 
