@@ -34,7 +34,7 @@
 | 备用模型 | DeepSeek（deepseek-chat） | 同为 OpenAI 兼容接口，环境变量一键切换，防止单点故障影响演示 |
 | OCR | 百度智能云 OCR 高精度版 | 有古籍/竖排优化，REST 接入 1 天内完成；不自研 |
 | 校勘类型判定 | 大模型结构化输出 + 规则后校验 | 模型给类型与置信度，规则引擎（形近字表、通假字表命中）修正置信度 |
-| 测试 | Vitest（前端校验/解析层）+ pytest（后端 schema 与模板）+ 手动主流程 | 测试只覆盖最易炸的 JSON schema 校验与体例生成 |
+| 测试 | Vitest（前端校验/解析层）+ pytest（后端 schema 与模板）+ 手动主流程 | 测试只覆盖最易炸的 JSON schema 校验与体例生成；命令：`npm test`、`.venv/Scripts/python -m pytest server/tests` |
 
 **前端不重构的结论**：现有 `CollationView.vue` 交互即参赛作品的核心亮点（人机协同+留痕），UI 不重做；改造只发生在"数据来源"——从组件内硬编码改为 Pinia store + API。
 
@@ -51,6 +51,17 @@
 | `.env.example` | `VITE_API_BASE=http://localhost:3001` |
 
 不改：路由、样式体系、opencc 转换逻辑、History/About 页（演示期间可隐藏入口）。
+例外（实施时发现确有问题才动，共两处）：工作台 `.workspace-container` 用 `height: 100vh` 套在
+顶栏与 `main-content` 内边距之内，会把工具栏挤出首屏、加载/错误状态屏也偏出可视区，
+改为按可用高度计算；`.btn-start` 的 hover `translateY` 会让元素在悬停时持续位移，
+触发自动化点击的稳定性重试，改为阴影反馈。
+
+**实施状态（2026-10-08）**：上表除 `TranslatorWidget.vue` 外均已落地——该组件的 `mockDict`
+仍待 F6 接入 `POST /api/v1/translate`。另记两处实现取舍：
+`src/api/client.js` 的前端超时取 35s（比后端的 30s 略长），让后端先返回带明确 code 的
+`LLM_TIMEOUT`，用户看到的是"模型超时"而不是笼统的"请求超时"；
+`src/stores/collation.js` 把「置信度 < 0.7 不参与全部采纳」实现为 `acceptAll` 只覆盖高置信条目，
+低置信条目仍可单独采纳。
 
 ## 4. 后端结构（Python + FastAPI）
 
@@ -83,6 +94,18 @@ requirements.txt      # fastapi, uvicorn, pydantic, httpx
 - Prompt 与端点映射：`collate_v1.md` → `POST /api/v1/collate`（校勘结果与白话译文一次返回）；`translate_text_v1.md` → `/collate` 的译文子 Prompt（`options.produceTranslation=true` 时拼入主调用，**无独立翻译端点**）；`explain_v1.md` → `POST /api/v1/translate`（划词释义）。
 - 运行：依赖装在独立虚拟环境（`python -m venv .venv && pip install -r requirements.txt`）；启动 `uvicorn server.main:app --reload --port 3001`；根 `package.json` 增加便捷脚本 `"dev:server": "uvicorn server.main:app --reload --port 3001"`，仅为统一命令入口，Python 依赖不进 npm。
 - 阶段二预留：检索与微调依赖（sentence-transformers、milvus-lite 等）届时追加到 requirements.txt，不影响阶段一启动。
+- **实施状态（2026-10-08）**：已建 `main.py`、`config.py`、`routers/{collate,health}.py`、
+  `services/{llm,confidence,prompt_loader}.py`、`utils/{errors,schemas,rate_limit}.py`、`prompts/`、`tests/`。
+  相对上面的结构图有三处差异：
+  ① 新增 `services/prompt_loader.py`——Prompt 资产按 `## SECTION` 分段加载并渲染 `{{占位符}}`，
+     故意不做缓存，改完 `.md` 立即生效（`.md` 改动不会触发 `uvicorn --reload`）；
+  ② 新增 `requirements-dev.txt`（pytest），与生产依赖分开，避免测试依赖上线；
+  ③ 新增 `server/tests/`，含一个**明确标记的本地假模型端点**（仅供离线联调与自动化测试，
+     生产代码不引用），用于无真实密钥时验证整条代码路径与各降级分支。
+  `routers/ocr.py`、`routers/translate.py`、`routers/export_note.py`、`services/ocr.py`、
+  `services/note_template.py` **尚未创建**，分别对应 F7 / F6 / F4 的服务端部分。
+- 解释器版本闸门：`server/__init__.py` 在 `sys.version_info < (3, 11)` 时直接抛出可读提示，
+  避免误用低版本 Python 时报出难以定位的 pydantic TypeError。
 
 ## 5. Prompt 设计（核心资产，写进方案"核心技术模块"）
 
@@ -116,7 +139,7 @@ requirements.txt      # fastapi, uvicorn, pydantic, httpx
 - 通假：「X」通「Y」，{释义}。
 - 异文：「X」，一作「Y」，{取舍理由}。
 
-前端按采纳的条目逐条生成；后端 exportNote 接口提供同逻辑服务端版本（用于视频里演示"导出规范校勘记"）。
+前端按采纳的条目逐条生成；后端 exportNote 接口提供同逻辑服务端版本（**尚未实现**，见 §4 实施状态）（用于视频里演示"导出规范校勘记"）。
 
 ## 7. 效果验证实验设计（应用效果 20 分的弹药）
 

@@ -1,6 +1,6 @@
 # 交接文档（HANDOFF）— 给执行会话
 
-> 版本：v1.0（2026-10-03）。本文件是执行会话的第一入口：接手任何任务前先完整读完本文，再按 §3 顺序读契约文档。
+> 版本：v1.1（2026-10-08）。本文件是执行会话的第一入口：接手任何任务前先完整读完本文，再按 §3 顺序读契约文档。
 
 ## 1. 项目是什么、为了什么
 
@@ -26,18 +26,21 @@
 
 范围有变化时**先改文档再改代码**，代码与文档冲突以文档为准。
 
-## 4. 仓库现状（截至 2026-10-03）
+## 4. 仓库现状（截至 2026-10-08）
 
-**已有**：
-- Vue 3 + Vite 前端（`src/`），4 个路由页：HomeView（上传/粘贴入口）、CollationView（双栏校勘台，核心 UI 已成型）、HistoryView、AboutView。
-- opencc-js 繁简转换已可用（`src/utils/converter.js`）；TranslatorWidget（划词释义悬浮球）、GujiUpload、AnnotationTooltip 组件已有 UI。
-- Pinia 已安装**但未被使用**（`src/stores/counter.js` 是脚手架残留）。
+**已有（F1–F3 主链路已打通）**：
+- 前端：Vue 3 + Vite，4 个路由页；opencc-js 繁简转换可用；TranslatorWidget（划词释义悬浮球）、GujiUpload、AnnotationTooltip 组件已有 UI。
+- 数据层已接真实接口：`src/api/client.js`（统一 baseURL/超时/错误结构）、`src/stores/collation.js`（原文/建议/译文/决策/时间线）、`src/utils/collationNote.js`（校勘记体例，纯规则）。Pinia 已在 `main.js` 中启用。
+- 后端：`server/`（FastAPI，端口 3001）已有 `POST /api/v1/collate` 与 `GET /api/v1/health`；模型输出过 pydantic 双闸门，`original` 非原文子串的条目丢弃并计入 `droppedCount`，契约外的脏数据不进 UI。
+- Prompt 资产：`server/prompts/` 下 `collate_v1.md`、`translate_text_v1.md`、`explain_v1.md`；回归集 8 段在 `server/prompts/regression/`。
+- 测试：后端 pytest 29 项（`server/tests/`）、前端 vitest 31 项（测试文件跟随源码放置）。
+- 工程配置：`.env.example`、`requirements.txt` + `requirements-dev.txt`；`.gitignore` 已忽略 `.venv/` 与 `__pycache__/`。
 
-**没有（= 阶段一要建的）**：
-- `server/` 目录整个不存在——FastAPI 后端从零建，结构照 TECH_DESIGN §4。
-- `.env` / `.env.example`、`requirements.txt`、任何真实 API 调用。
-- **前端所有数据全是硬编码 mock**：`CollationView.vue` 内的 `originalData`、`collationItems`、`translationText`，`TranslatorWidget.vue` 内的 `mockDict`，HomeView 的"开始校勘"只 console.log 后直接跳转。这些是阶段一 P0 要消灭的目标。
-- Prompt 资产（`server/prompts/`）、回归集、EVAL 标注规范、问卷模板（后两份 deadline 见 §6）。
+**仍未做**：
+- `server/routers/ocr.py`、`server/routers/translate.py`、`server/routers/export_note.py`，以及 `server/services/ocr.py`、`server/services/note_template.py` 均未创建——分别属 F7 / F6 / F4 的服务端部分。
+- 前端 `TranslatorWidget.vue` 仍是 `mockDict` 硬编码（F6）；`HistoryView.vue` 仍是硬编码演示记录（阶段一无持久化，且 TECH_DESIGN §3 明确本阶段不改该页；演示前按 §6 隐藏入口）。
+- **尚未用真实密钥跑通模型**，见 §7「遗留验证」。
+- EVAL 标注规范、问卷模板仍未写（deadline 见 §6）。
 
 ## 5. 已定决策（不要重新讨论、不要另立方案）
 
@@ -55,16 +58,18 @@
 
 按依赖关系排序，不设日历日期：
 
-1. F1+F2+F3 端到端真实链路（粘贴路径）——**当前任务**；
-2. F4 校勘记导出 + F5 译文真实化 + 加载/错误态；
-3. F6 划词释义 + F7 OCR（闸门：时间不够砍 F7）；
-4. 对比实验 + 试点问卷。
+1. **F1+F2+F3 端到端真实链路（粘贴路径）—— 已完成（2026-10-08）**，见 §7；
+2. F4 校勘记导出 + F5 译文真实化 + 加载/错误态 —— **部分完成**：译文已随 `/collate` 由模型真实返回（F5 主体），
+   加载/空态/错误态已随第 1 步补齐；校勘记目前由前端按文献学体例生成，
+   **后端 `POST /export/collation-note` 端点与 `services/note_template.py` 仍未建**（属 F4 服务端部分）；
+3. F6 划词释义 + F7 OCR（闸门：时间不够砍 F7）—— 未开始；
+4. 对比实验 + 试点问卷 —— 未开始。
 
 未写的两份文档不阻塞开发，但需在对应工作开跑前完成：
 - **问卷模板**：招募试用同学有提前量，先于试点发放前定稿；
 - **EVAL.md 标注规范**：对比实验开跑前必须定稿。
 
-## 7. 第一个任务（阶段一 P0）与验收标准
+## 7. 第 1 步任务（阶段一 P0）：**已完成（2026-10-08）**
 
 **任务**：打通"首页粘贴古籍文本 → 后端调大模型校勘 → 校勘页渲染真实建议 → 采纳/还原 → 导出校勘记"的端到端真实链路。
 
@@ -80,8 +85,34 @@
 - 断网或密钥缺失时前端有明确降级提示，不白屏、不渲染脏数据。
 - 主链路代码里搜不到演示用硬编码数据。
 
+**核对结果**：`npm run build` 通过、`uvicorn` 启动无报错、`/api/v1/health` 返回 ok；
+用《左传·曹刿论战》选段（非《论语》演示例，含人工注入的形近误字）走通全链路，导出得到符合体例的校勘记；
+断网时首页与校勘页均有明确提示（含错误码与处理建议），未白屏、未渲染脏数据；主链路已无硬编码演示数据。
+**注意**：其中"模型返回建议"这一环是用本地假模型端点验证的，**真实模型尚未接通**，见下。
+
+### 遗留验证（下一步第一件事必须做）
+
+- 上游**真实模型尚未接通验证**。模型调用是用明确标记的本地假模型端点
+  （`server/tests/fake_llm_provider.py`，仅测试/联调，生产代码不引用）验证的，
+  覆盖了「请求 → Prompt 组装 → 上游调用 → JSON 提取 → schema 校验 → 原文定位/去重 →
+  置信度规则修正 → 响应」整条真实代码路径与全部降级分支；但**真实模型返回的建议质量**未经确认。
+  开工第一件事：填入真实 `LLM_API_KEY`，按 `server/prompts/regression/` 的用例跑一遍，
+  核对 `mustFind` 与 `minItems/maxItems`，并记录 `droppedCount`。
+- 若真实模型的 `reason` 字段经常缺失，会被 schema 闸门整条丢弃（表现为
+  `items` 很少而 `droppedCount` 很大）——此时该调 `collate_v1.md` 的输出约束，而不是放宽校验。
+
 ## 8. 环境备忘
 
-- Node ^22.18.0 / >=24.12.0；Python >= 3.11（`python -m venv .venv`，依赖装 `requirements.txt`：fastapi、uvicorn、pydantic、httpx）。
-- 需要的密钥（放 `.env`，参照 TECH_DESIGN §4 环境变量清单）：`LLM_API_KEY` 必需；`OCR_API_KEY`/`OCR_SECRET_KEY` 在做 F7 时才需要。
-- 前端 5173、后端 3001；跨域由 FastAPI CORS 处理。
+- Node ^22.18.0 / >=24.12.0；Python >= 3.11。
+- 首次搭建：`py -3.11 -m venv .venv` → `.venv/Scripts/pip install -r requirements.txt`
+  （要跑测试再加 `-r requirements-dev.txt`，含 pytest）。
+- **启动后端前必须激活 `.venv`**：`npm run dev:server` 依赖 PATH 上的 `uvicorn`。
+  若误用系统自带低版本 Python，`server/__init__.py` 的版本闸门会拦下并打印正确的启动方式
+  （否则报错会是一句难以定位的 pydantic TypeError）。
+- 常用命令：`npm run dev`（前端 5173）、`npm run dev:server`（后端 3001）、
+  `npm test`（前端 vitest）、`.venv/Scripts/python -m pytest server/tests`（后端 pytest）。
+- 需要的密钥（放 `.env`，参照 `.env.example` 与 TECH_DESIGN §4）：`LLM_API_KEY` 必需；
+  `OCR_API_KEY`/`OCR_SECRET_KEY` 在做 F7 时才需要。
+- 前端 5173、后端 3001；跨域由 FastAPI CORS 处理（已允许 5173 与 4173 的本机来源）。
+- **无真实密钥时的离线联调**：见 `server/tests/README.md`（启动假模型端点、指定环境变量、
+  预期返回值与各故障分支的完整步骤）。
