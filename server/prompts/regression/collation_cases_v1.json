@@ -1,0 +1,145 @@
+{
+  "version": "v1",
+  "prompt": "collate_v1",
+  "endpoint": "POST /api/v1/collate",
+  "description": "Prompt 回归集：固定测试文本 + 期望要点。用于 Prompt 改版（v1 -> v2）后的效果对比，不作为评测基准（评测基准见 docs/EVAL.md 与本目录说明）。",
+  "datasetNotes": [
+    "文本均为公共版权古籍通行本的短选段，只作 Prompt 回归输入，不作校勘底本。",
+    "kind=control 的用例是干净文本，用来观察误报：理想结果是 0 条，maxItems 给出容忍上限。",
+    "kind=injected 的用例由本项目人工注入错误，injected 字段记录注入内容（即 ground truth）。",
+    "默认 options.produceTranslation=false，让回归只关心校勘条目不掺译文随机性。"
+  ],
+  "defaultOptions": {
+    "produceTranslation": false
+  },
+  "cases": [
+    {
+      "id": "reg-001",
+      "kind": "control",
+      "origin": "《史记》项羽本纪选段",
+      "source": "项籍者，下相人也，字羽。初起时，年二十四。其季父项梁，梁父即楚将项燕，为秦将王翦所戮者也。项氏世世为楚将，封于项，故姓项氏。",
+      "expected": {
+        "injected": "无（干净对照文本）",
+        "mustFind": [],
+        "minItems": 0,
+        "maxItems": 1,
+        "notes": "正确文本上不应报错。「项」字反复出现是正常行文，不是衍文。"
+      }
+    },
+    {
+      "id": "reg-002",
+      "kind": "control",
+      "origin": "《孟子》告子上「鱼我所欲也」选段",
+      "source": "鱼，我所欲也；熊掌，亦我所欲也。二者不可得兼，舍鱼而取熊掌者也。生，亦我所欲也；义，亦我所欲也。二者不可得兼，舍生而取义者也。",
+      "expected": {
+        "injected": "无（干净对照文本）",
+        "mustFind": [],
+        "minItems": 0,
+        "maxItems": 1,
+        "notes": "对文句式（「A，亦我所欲也」重复出现）是修辞，不得判为衍文或脱文。"
+      }
+    },
+    {
+      "id": "reg-003",
+      "kind": "control",
+      "origin": "《荀子》劝学篇选段",
+      "source": "君子曰：学不可以已。青，取之于蓝，而青于蓝；冰，水为之，而寒于水。",
+      "expected": {
+        "injected": "无（干净对照文本）",
+        "mustFind": [],
+        "minItems": 0,
+        "maxItems": 1,
+        "notes": "「青」字两见属正常用字，不得判为衍文。"
+      }
+    },
+    {
+      "id": "reg-004",
+      "kind": "control",
+      "origin": "《韩非子》五蠹篇「守株待兔」选段",
+      "source": "宋人有耕者，田中有株，兔走触株，折颈而死。因释其耒而守株，冀复得兔。兔不可复得，而身为宋国笑。",
+      "expected": {
+        "injected": "无（干净对照文本）",
+        "mustFind": [],
+        "minItems": 0,
+        "maxItems": 1,
+        "notes": "「株」字三见是复现主题词，不是衍文。"
+      }
+    },
+    {
+      "id": "reg-005",
+      "kind": "injected",
+      "origin": "《左传》庄公十年「曹刿论战」选段",
+      "source": "十年春，齐师代我。公将战，曹刿请见。其乡人曰：「肉食者谋之，又何间焉？」刿曰：「肉食者鄙，未能远谋。」乃入见。",
+      "expected": {
+        "injected": "把「齐师伐我」的「伐」误写作「代」，属形近而讹",
+        "mustFind": [
+          {
+            "type": "讹字",
+            "originalContains": "代",
+            "suggestedContains": "伐"
+          }
+        ],
+        "minItems": 1,
+        "maxItems": 4,
+        "notes": "「代」在句中文义不通（齐军代我），形近与义理两条路径都指向「伐」。"
+      }
+    },
+    {
+      "id": "reg-006",
+      "kind": "injected",
+      "origin": "《庄子》逍遥游选段",
+      "source": "北冥有鱼，其名鲲。鲲之大，不知其几千里也。化而为鸟，其名为鹏。",
+      "expected": {
+        "injected": "脱去「其名为鲲」的「为」字",
+        "mustFind": [
+          {
+            "type": "脱文",
+            "originalContains": "其名鲲",
+            "suggestedContains": "其名为鲲"
+          }
+        ],
+        "minItems": 1,
+        "maxItems": 4,
+        "notes": "对文下句作「其名为鹏」，据此可校上句脱「为」字。"
+      }
+    },
+    {
+      "id": "reg-007",
+      "kind": "injected",
+      "origin": "《世说新语》德行篇「陈太丘与友期行」选段",
+      "source": "陈太丘与友期行，期日中，过中不至，太丘舍舍去，去后乃至。",
+      "expected": {
+        "injected": "「太丘舍去」误重一个「舍」字，成「舍舍去」",
+        "mustFind": [
+          {
+            "type": "衍文",
+            "originalContains": "舍舍",
+            "suggestedContains": "舍去"
+          }
+        ],
+        "minItems": 1,
+        "maxItems": 4,
+        "notes": "误重一字是衍文最常见的形态。"
+      }
+    },
+    {
+      "id": "reg-008",
+      "kind": "injected",
+      "origin": "《史记》项羽本纪「鸿门宴」选句",
+      "source": "旦日不可不蚤自来谢项王。",
+      "expected": {
+        "injected": "未注入错误：本句「蚤」通「早」，用于检验通假类识别与「只标注不替换」的分寸",
+        "mustFind": [
+          {
+            "type": "通假",
+            "originalContains": "蚤",
+            "suggestedContains": "早"
+          }
+        ],
+        "minItems": 1,
+        "maxItems": 3,
+        "notes": "「蚤」指跳蚤，于此文义不通，依音近路径通「早」。文件要求通假只标注本字，理由中应体现不改动原文之意。"
+      }
+    }
+  ]
+}

@@ -14,7 +14,12 @@
 | `LLM_TIMEOUT` | 504 | 大模型超时（>30s） |
 | `LLM_BAD_JSON` | 502 | 模型输出未通过 JSON schema 校验（前端提示重试） |
 | `RATE_LIMITED` | 429 | 触发限流 |
-| `PROVIDER_MISCONFIGURED` | 500 | 密钥缺失 |
+| `PROVIDER_MISCONFIGURED` | 500 | 模型通道不可用：密钥缺失、密钥无效，或上游返回 4xx/5xx、连不上 |
+| `INTERNAL_ERROR` | 500 | 服务端内部错误（未预期异常、Prompt 资产缺失等），详情见后端日志 |
+
+**上游失败的归口说明**：`PROVIDER_MISCONFIGURED` 不限于「密钥缺失」，也承接「上游服务不可用」
+（网络不通、上游 4xx/5xx、配额受限）。带上游状态码与响应摘要写在 `message` 里便于现场定位；
+前端对这三类一视同仁——给出明确降级提示，不渲染脏数据。超时仍单独用 `LLM_TIMEOUT`。
 
 ---
 
@@ -48,7 +53,7 @@
   }
 }
 ```
-`options` 可省略，默认如上。
+`options` 可省略，默认如上；显式传 `null` 视同省略。
 
 **Response 200**：
 ```json
@@ -76,8 +81,17 @@
 - `confidence` ∈ [0,1]；<0.7 的条目前端折叠为"低置信建议"，不参与"全部采纳"
 - `original` 必须是 `text` 的子串（后端校验，不满足则丢弃该条并计数返回 `droppedCount`）
 - `offset` 为 `original` 在 `text` 中的首字符下标
+- `id` 由后端按序分配（模型输出契约中无此字段，见 TECH_DESIGN §5），前端不自行生成
 
 **Response 200 扩展字段**：`"droppedCount": 0`（模型输出被规则过滤的条数，用于方案里"输出可靠性控制"的佐证）。
+计入 `droppedCount` 的三种情况：① 单条不合 schema（类型不在五类内、缺理由、置信度越界等）；
+② `original` 不是 `text` 的子串；③ 与已有条目完全重复（同类型、同原文、同建议）。
+逐条丢弃而非整批报错——一条坏数据不该废掉整次校勘。
+即使全部条目都被丢弃，仍返回 200（`items` 为空数组、`droppedCount` 为丢弃总数），
+由前端说明「未发现问题 / 有 N 条建议被拦截」；只有**信封级**失败（内容不是 JSON、
+`items` 不是数组）才回 `LLM_BAD_JSON`。
+`offset` 一律由后端按 `text.find(original)` 重新定位，不采信模型自报值；
+返回的 `items` 按 `offset` 升序排列。
 
 ---
 

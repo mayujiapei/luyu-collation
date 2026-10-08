@@ -1,0 +1,4 @@
+# 后端开发/测试依赖（生产依赖见 requirements.txt，两者分开以免把测试依赖带上线）
+# 安装：./.venv/Scripts/python.exe -m pip install -r requirements-dev.txt
+-r requirements.txt
+pytest>=8.0.0

@@ -42,3 +42,12 @@ __screenshots__/
 .env
 .env.*
 !.env.example
+
+# Python 后端（依赖装在独立虚拟环境，不进 npm）
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
