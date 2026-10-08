@@ -40,7 +40,7 @@ app = FastAPI(title="本地假模型端点（联调/测试专用）")
 _MODE_BY_MODEL_KEYWORD = ("badjson", "schemafail", "timeout", "error500")
 
 # 联调样例文本：人工拼凑的测试串（**不是真实文献**），只为让下面的固定条目有落点。
-# 用它喂 POST /collate 时，期望结果为 kept=4 / dropped=3，且置信度经规则修正：
+# 用它喂 POST /collate 时，期望结果为 kept=4 / dropped=4，且置信度经规则修正：
 #   「代 / 伐」命中形近表 -> 0.95 提到 1.0
 #   「说 / 悦」命中通假表 -> 0.90 提到 1.0
 #   「未 / 末」命中形近表 -> 百分数 88 先归一为 0.88，再提到 0.98
@@ -96,6 +96,16 @@ _FIXTURE_ITEMS = [
         "confidence": 0.9,
     },
     {
+        # 丢弃：suggested 与 original 相同（空操作）。这正是实测中真实模型对异文类的做法——
+        # 把别本写法只写进 reason，suggested 填成与底本相同。它会让 UI 显示成「X → X」、
+        # 校勘记写出「一作 X」的自指句，故按不合契约丢弃（API.md §2）
+        "type": "异文",
+        "original": "公将战",
+        "suggested": "公将战",
+        "reason": "联调固定样本：suggested 与 original 相同，属空操作，应被丢弃",
+        "confidence": 0.6,
+    },
+    {
         # 丢弃：original 不在样例文本中（模拟模型幻觉出的片段）
         "type": "异文",
         "original": "有朋自远方来",
@@ -123,8 +133,8 @@ FIXTURE_EXPECTED = {
     "keptIds": [1, 2, 3, 4],
     "keptOffsets": [2, 11, 14, 19],
     "keptConfidence": [1.0, 1.0, 0.55, 0.98],
-    "dropped": 3,
-    "droppedReason": "1 条类型不合法 + 1 条原文定位失败 + 1 条重复",
+    "dropped": 4,
+    "droppedReason": "1 条类型不合法 + 1 条 suggested 与 original 相同（空操作） + 1 条原文定位失败 + 1 条重复",
 }
 
 

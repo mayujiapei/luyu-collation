@@ -161,3 +161,9 @@ LLM_MODEL=mimo-v2.6-pro
 - 前端 5173、后端 3001；跨域由 FastAPI CORS 处理（已允许 5173 与 4173 的本机来源）。
 - **无真实密钥时的离线联调**：见 `server/tests/README.md`（启动假模型端点、指定环境变量、
   预期返回值与各故障分支的完整步骤）。
+- **改了后端代码后，务必确认 reload 真的发生了**（`npm run dev:server` 的日志里出现
+  `WatchFiles detected changes ... Reloading...`）。实测踩过一次：连续改多个文件时 watchfiles
+  只捕获到其中一个并合并处理，结果进程跑的是"改了一半"的旧代码——现象是前端表现与刚写完的
+  逻辑不符，却查不出代码问题。必要时直接重启后端（`taskkill` 掉监听 3001 的进程：
+  注意要杀的是 uvicorn reloader 的**子进程**，父进程死后 socket 句柄仍会记在父 PID 名下，
+  用 `Get-CimInstance Win32_Process` 按命令行含 `multiprocessing-fork` 找到真正在服务的那个）。

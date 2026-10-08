@@ -62,6 +62,27 @@ describe('renderEntry 五类体例', () => {
   it('未知类型退回可读形式而不是抛错', () => {
     expect(renderEntry({ type: '错别字', original: '甲', suggested: '乙' })).toBe('「甲」改作「乙」。')
   })
+
+  it('suggested 与 original 相同时退化为纯标注，不产生自指句', () => {
+    // 实测中真实模型对异文类就是这样作答的（把别本写法只写进理由）：
+    // 契约已禁止（API.md §2，后端 schema 闸门会丢弃），这里是最后一道兜底
+    const degenerate = {
+      type: '异文',
+      original: '豫章故郡',
+      suggested: '豫章故郡',
+      reason: '别本作「南昌故郡」，据通行本取「豫章」',
+    }
+    const entry = renderEntry(degenerate)
+    expect(entry).toBe('「豫章故郡」，别本作「南昌故郡」，据通行本取「豫章」。')
+    expect(entry).not.toContain('一作')
+    expect(entry).not.toContain('底本误作')
+  })
+
+  it('讹字类退化时同样不出现「底本误作 X」的自指', () => {
+    const entry = renderEntry({ type: '讹字', original: '甲', suggested: '甲', reason: '存疑' })
+    expect(entry).toBe('「甲」，存疑。')
+    expect(entry).not.toContain('底本误作')
+  })
 })
 
 describe('diffFragments', () => {

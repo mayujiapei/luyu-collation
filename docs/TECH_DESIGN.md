@@ -80,7 +80,8 @@ server/
     confidence.py     # 置信度规则修正（形近字表/通假字表命中）
     note_template.py  # 校勘记体例模板生成（纯规则，不调模型）
   prompts/            # Prompt 资产：按文件管理、带版本号（见 §5）
-    collate_v1.md
+    collate_v1.md        # 保留，供回归对比
+    collate_v2.md        # 当前生效（收紧 suggested 契约，见 §5）
     translate_text_v1.md
     explain_v1.md
     regression/       # Prompt 回归集：固定测试文本 + 期望要点
@@ -91,7 +92,7 @@ requirements.txt      # fastapi, uvicorn, pydantic, httpx
 ```
 
 - 环境变量：`LLM_PROVIDER`、`LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`、`OCR_API_KEY`、`OCR_SECRET_KEY`、`PORT`（默认 3001，与 API.md 约定一致）。
-- Prompt 与端点映射：`collate_v1.md` → `POST /api/v1/collate`（校勘结果与白话译文一次返回）；`translate_text_v1.md` → `/collate` 的译文子 Prompt（`options.produceTranslation=true` 时拼入主调用，**无独立翻译端点**）；`explain_v1.md` → `POST /api/v1/translate`（划词释义）。
+- Prompt 与端点映射：`collate_v2.md` → `POST /api/v1/collate`（校勘结果与白话译文一次返回）；`translate_text_v1.md` → `/collate` 的译文子 Prompt（`options.produceTranslation=true` 时拼入主调用，**无独立翻译端点**）；`explain_v1.md` → `POST /api/v1/translate`（划词释义）。
 - 运行：依赖装在独立虚拟环境（`python -m venv .venv && pip install -r requirements.txt`）；启动 `uvicorn server.main:app --reload --port 3001`；根 `package.json` 增加便捷脚本 `"dev:server": "uvicorn server.main:app --reload --port 3001"`，仅为统一命令入口，Python 依赖不进 npm。
 - 阶段二预留：检索与微调依赖（sentence-transformers、milvus-lite 等）届时追加到 requirements.txt，不影响阶段一启动。
 - **实施状态（2026-10-08）**：已建 `main.py`、`config.py`、`routers/{collate,health}.py`、
@@ -128,6 +129,21 @@ requirements.txt      # fastapi, uvicorn, pydantic, httpx
 
 **自校验清单放进 user prompt 尾部**：建议必须可在原文中定位；不确定时降低置信度而非硬改；通假只标注不替换（文献学惯例，这本身就是方案里的学科适配亮点）。
 
+**`suggested` 必须与 `original` 不同（v2 收紧，实测驱动）**：v1 允许"原文无须改动时与 `original` 一致"，
+结果真实模型对异文类就产出 `original = suggested = 「豫章故郡」`——把别本写法（「南昌故郡」）
+只写进了理由。后果有三层：卡片显示成 `X → X` 的空操作；校勘记生成「一作「豫章故郡」」的自指句；
+阶段二要给对校引擎输出的**异文清单**也无从结构化。因此 v2 规定：
+
+| 类型 | `suggested` 填什么 |
+|---|---|
+| 讹字 / 衍文 / 脱文 | 校改后的片段 |
+| 通假 | 本字 |
+| 异文 | **别本异文写法**（不是底本写法） |
+
+没有可提出的改动或别本写法时，**不要报这一条**（宁缺勿滥，与本 Prompt 一贯的"不确定就降置信度
+而不是硬改"一致）。后端另在 schema 闸门兜底：`suggested == original` 的条目丢弃并计入
+`droppedCount`（API.md §2）。
+
 **置信度修正（services/confidence.py）**：命中通假字表/形近字表 +0.1；模型置信度 <0.7 的建议默认折叠到"低置信"分组，不进一键采纳。
 
 ## 6. 校勘记体例生成（F4，差异化卖点）
@@ -138,6 +154,10 @@ requirements.txt      # fastapi, uvicorn, pydantic, httpx
 - 脱文：「X」下脱「Y」，{理由}，今补。
 - 通假：「X」通「Y」，{释义}。
 - 异文：「X」，一作「Y」，{取舍理由}。
+
+其中 X 取 `original`、Y 取 `suggested`：讹字类的 X 是校正后写法、Y 是底本误字；
+通假类的 X 是借字、Y 是本字；异文类的 X 是底本写法、Y 是**别本异文**。
+由于两字段保证不同（见 §5），模板不会生成「一作 X」这种自指句。
 
 前端按采纳的条目逐条生成；后端 exportNote 接口提供同逻辑服务端版本（**尚未实现**，见 §4 实施状态）（用于视频里演示"导出规范校勘记"）。
 

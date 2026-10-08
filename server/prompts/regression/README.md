@@ -9,7 +9,11 @@
 
 | 文件 | 内容 |
 |---|---|
-| `collation_cases_v1.json` | 8 段固定文本 + 期望要点：4 段干净对照（看误报）、4 段人工注入错误（看检出） |
+| `collation_cases_v2.json` | **当前版本**：9 段固定文本 + 期望要点（4 干净对照 / 4 人工注入 / 1 版本异文专项），目标 `collate_v2` |
+| `collation_cases_v1.json` | 上一版：8 段，目标 `collate_v1`。保留以便新旧 Prompt 对比，执行器用 `--cases` 指定 |
+
+新用例集的 `prompt` 字段标明它对应的 Prompt 版本；换 Prompt 版本时把用例另存新文件（`_v3` …），
+旧版留在原地，这样"某个数字是哪套用例、哪个 Prompt 跑出来的"始终可追溯。
 
 ## 用例字段
 
@@ -18,7 +22,12 @@
 - `kind: injected` —— 我方人工注入的错误，`expected.injected` 记录注入内容（ground truth），
   `expected.mustFind` 给出必须命中的要点：`originalContains` / `suggestedContains` 做子串匹配，
   刻意不用精确相等，避免因模型取片段长短不同而误判为未命中。
+- `kind: clean` —— 干净文本，但**存在合法的校勘点**（如 `reg-009` 的版本异文）。
+  这类既不能要求"必须检出"（模型不报也合理），也不能当误报压制，所以 `minItems: 0`
+  配合较宽的 `maxItems`，重点看它是否遵守契约——`maxDropped` 设为 0 即可发现
+  "模型仍产出不合契约条目"（模型报空操作会被 schema 闸门丢弃，从而把 `droppedCount` 顶上去）。
 - `minItems` / `maxItems` —— 建议条数的可接受区间。
+- `maxDropped`（可选）—— `droppedCount` 上限。设为 0 表示"这条文本不该有任何条目不合约"。
 
 ## 怎么跑
 

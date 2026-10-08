@@ -7,6 +7,7 @@
     ./.venv/Scripts/python.exe -m server.tests.run_regression
     ./.venv/Scripts/python.exe -m server.tests.run_regression --only reg-005
     ./.venv/Scripts/python.exe -m server.tests.run_regression --verbose   # 打印每条建议
+    ./.venv/Scripts/python.exe -m server.tests.run_regression --cases collation_cases_v1.json
 
 退出码：全部通过 0；有失败 1。这样可以直接挂到 CI 或演示前的冒烟流程里。
 """
@@ -24,9 +25,9 @@ from fastapi.testclient import TestClient
 from server.main import app
 from server.utils.schemas import COLLATION_TYPES
 
-CASES_PATH = (
-    Path(__file__).resolve().parent.parent / "prompts" / "regression" / "collation_cases_v1.json"
-)
+CASES_DIR = Path(__file__).resolve().parent.parent / "prompts" / "regression"
+# 默认跑最新的用例集；要拿旧版对比就显式 --cases collation_cases_v1.json
+DEFAULT_CASES = "collation_cases_v2.json"
 
 
 @dataclass
@@ -43,8 +44,12 @@ class CaseResult:
     error: str = ""
 
 
-def _load_cases() -> tuple[dict, list[dict]]:
-    payload = json.loads(CASES_PATH.read_text(encoding="utf-8"))
+def _load_cases(name: str) -> tuple[dict, list[dict]]:
+    path = CASES_DIR / name
+    if not path.is_file():
+        available = sorted(p.name for p in CASES_DIR.glob("collation_cases_*.json"))
+        raise SystemExit(f"用例文件不存在：{path}\n可选：{available}")
+    payload = json.loads(path.read_text(encoding="utf-8"))
     return payload, payload["cases"]
 
 
@@ -60,6 +65,19 @@ def _check_case(case: dict, body: dict) -> list[str]:
         problems.append(f"条数 {len(items)} < minItems {minimum}（漏报）")
     if maximum is not None and len(items) > maximum:
         problems.append(f"条数 {len(items)} > maxItems {maximum}（误报）")
+
+    max_dropped = expected.get("maxDropped")
+    if max_dropped is not None and body.get("droppedCount", 0) > max_dropped:
+        problems.append(
+            f"droppedCount {body['droppedCount']} > maxDropped {max_dropped}"
+            "（模型仍产出不合契约的条目，说明约束没起作用）"
+        )
+
+    # 契约不变式：suggested 不得等于 original（API.md §2）。后端 schema 闸门本已丢弃这类
+    # 条目，所以正常永远不触发；留着是为了万一哪天闸门被放宽时能被发现。
+    degenerate = [item["original"] for item in items if item["suggested"] == item["original"]]
+    if degenerate:
+        problems.append(f"出现 suggested 与 original 相同的空操作条目：{degenerate}")
 
     for want in expected.get("mustFind", []):
         hit = any(
@@ -82,16 +100,20 @@ def _check_case(case: dict, body: dict) -> list[str]:
     return problems
 
 
-def run(only: str | None, verbose: bool) -> int:
-    payload, cases = _load_cases()
+def run(cases_name: str, only: str | None, verbose: bool) -> int:
+    payload, cases = _load_cases(cases_name)
     if only:
         cases = [case for case in cases if case["id"] == only]
         if not cases:
             print(f"没有找到用例 {only}")
             return 1
 
-    print(f"回归集 {payload.get('version')} · Prompt {payload.get('prompt')} · 端点 {payload.get('endpoint')}")
-    print(f"用例数 {len(cases)}（control=干净对照看误报，injected=注入错误看检出）\n")
+    print(f"用例文件 {cases_name}（回归集 {payload.get('version')}）")
+    print(f"目标 Prompt {payload.get('prompt')} · 端点 {payload.get('endpoint')}")
+    print(
+        f"用例数 {len(cases)}"
+        "（control=干净对照看误报，injected=注入错误看检出，clean=干净文本但看契约遵守）\n"
+    )
 
     results: list[CaseResult] = []
     with TestClient(app, raise_server_exceptions=False) as client:
@@ -155,10 +177,11 @@ def run(only: str | None, verbose: bool) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Prompt 回归集执行器（需要真实密钥）")
+    parser.add_argument("--cases", default=DEFAULT_CASES, help=f"用例文件名，默认 {DEFAULT_CASES}")
     parser.add_argument("--only", help="只跑某个用例，如 reg-005")
     parser.add_argument("--verbose", action="store_true", help="打印每条建议的内容")
     args = parser.parse_args()
-    sys.exit(run(args.only, args.verbose))
+    sys.exit(run(args.cases, args.only, args.verbose))
 
 
 if __name__ == "__main__":

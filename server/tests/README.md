@@ -46,11 +46,12 @@ curl -s http://localhost:3001/api/v1/collate -H "Content-Type: application/json"
 - `confidence` 依次为 `1.0`、`1.0`、`0.55`、`0.98`：前两条由字表命中 +0.1 封顶到 1.0；
   第四条先生成 88 → 归一 0.88，再命中形近表（未/末）提到 0.98；
   第三条（异文）未命中任何字表，保持 0.55，前端会折叠进「低置信建议」且不参与「全部采纳」
-- `droppedCount` = 3：类型不合法 1 条、原文定位失败 1 条、重复 1 条
+- `droppedCount` = 4：类型不合法 1 条、`suggested` 与 `original` 相同（空操作）1 条、
+  原文定位失败 1 条、重复 1 条
 
 换用 `server/prompts/regression/collation_cases_v1.json` 里 `reg-005` 的真实选段
 （《左传》曹刿论战，含人工注入的「代」误字）时，期望 `items` 2 条
-（讹字「代」、低置信异文「肉食者鄙」）、`droppedCount` = 5。
+（讹字「代」、低置信异文「肉食者鄙」）、`droppedCount` = 6。
 
 ## 故障分支
 

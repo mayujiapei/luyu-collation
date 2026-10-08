@@ -92,6 +92,13 @@ const TYPE_RENDERERS = {
 
 /** 单条建议 -> 一行校勘记。类型未知时退回「原文 -> 建议」的可读形式。 */
 export function renderEntry(item, referenceEdition = '通行本') {
+  // 兜底：契约要求 suggested 与 original 不同（API.md §2），后端 schema 闸门已拦。
+  // 万一仍拿到相同值，绝不能拼出「一作「X」」「底本误作「X」」这类自指句
+  //（实测中真实模型对异文类正是如此作答）。此时只作纯标注，不宣称任何改动。
+  if (item?.original === item?.suggested) {
+    return `「${item.original}」${withReason(item.reason)}。`
+  }
+
   const renderer = TYPE_RENDERERS[item?.type]
   if (!renderer) return `「${item?.original}」改作「${item?.suggested}」。`
   return renderer(item, referenceEdition)

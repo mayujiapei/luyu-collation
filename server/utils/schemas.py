@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # 非功能需求：单次校勘文本 ≤5000 字（PRD §5）
 MAX_TEXT_LEN = 5000
@@ -80,6 +80,18 @@ class ModelItem(BaseModel):
         if not 0.0 <= value <= 1.0:
             raise ValueError(f"confidence 越界：{value}")
         return value
+
+    @model_validator(mode="after")
+    def _suggested_must_differ_from_original(self) -> "ModelItem":
+        """`suggested` 必须与 `original` 不同（API.md §2 字段约束）。
+
+        相同即「空操作」，有害无益：UI 会显示成「X → X」，校勘记会写出「一作 X」的自指句，
+        阶段二要喂给对校引擎的异文清单也无从结构化。实测中真实模型正是这样处理异文类的
+        （把别本写法只写进 reason），所以这里做成硬约束：不合契约的条目丢弃并计入 droppedCount。
+        """
+        if self.suggested == self.original:
+            raise ValueError("suggested 与 original 相同，属空操作，不成其为校勘建议")
+        return self
 
 
 class ModelOutputEnvelope(BaseModel):

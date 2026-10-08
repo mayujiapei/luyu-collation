@@ -16,6 +16,7 @@ import time
 import pytest
 import uvicorn
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from server.config import Settings
 from server.main import app
@@ -25,7 +26,7 @@ from server.tests.fake_llm_provider import FIXTURE_SAMPLE_TEXT
 from server.tests.fake_llm_provider import app as fake_app
 from server.utils import rate_limit
 from server.utils.errors import ApiError
-from server.utils.schemas import MAX_TEXT_LEN
+from server.utils.schemas import MAX_TEXT_LEN, ModelItem
 
 FAKE_PORT = 3099
 FAKE_BASE_URL = f"http://127.0.0.1:{FAKE_PORT}/v1"
@@ -101,8 +102,9 @@ def test_collate_filters_and_normalizes_model_output(client: TestClient) -> None
     assert response.status_code == 200
     body = response.json()
 
-    # 假模型给了 7 条，其中 1 条类型不合法、1 条原文定位失败、1 条重复 -> 丢弃 3 条
-    assert body["droppedCount"] == 3
+    # 假模型给了 8 条，其中 1 条类型不合法、1 条 suggested 与 original 相同（空操作）、
+    # 1 条原文定位失败、1 条重复 -> 丢弃 4 条
+    assert body["droppedCount"] == 4
     assert [item["id"] for item in body["items"]] == [1, 2, 3, 4]
     assert [item["type"] for item in body["items"]] == ["讹字", "通假", "异文", "讹字"]
     # offset 由后端按原文重新定位并按升序排列，不采信模型自报值
@@ -144,7 +146,7 @@ def test_collate_accepts_explicit_null_options(client: TestClient) -> None:
 def test_collate_with_text_matching_nothing_drops_everything(client: TestClient) -> None:
     body = _collate(client, "abc").json()
     assert body["items"] == []
-    assert body["droppedCount"] == 7
+    assert body["droppedCount"] == 8
 
 
 # ---------------------------------------------------------------------------
@@ -308,3 +310,42 @@ def test_extract_json_object_rejects_prose() -> None:
     with pytest.raises(ApiError) as excinfo:
         extract_json_object("这里完全没有 JSON。")
     assert excinfo.value.code == "LLM_BAD_JSON"
+
+
+# ---------------------------------------------------------------------------
+# 输出契约：suggested 必须与 original 不同（API.md §2）
+# ---------------------------------------------------------------------------
+def test_schema_rejects_no_op_suggestion() -> None:
+    """suggested 与 original 相同属空操作，直接判为不合契约。
+
+    实测来源：真实模型对异文类正是这样——把别本写法只写进 reason，
+    suggested 填成与底本相同。若不拦，UI 会显示「X → X」、校勘记会写出「一作 X」。
+    """
+    with pytest.raises(ValidationError):
+        ModelItem(
+            type="异文",
+            original="豫章故郡",
+            suggested="豫章故郡",
+            reason="别本作「南昌故郡」，据通行本取「豫章」",
+            confidence=0.65,
+        )
+
+
+def test_schema_accepts_variant_reading_as_suggested() -> None:
+    """异文类把别本写法放进 suggested —— 这是 v2 契约要求的正确形态。"""
+    item = ModelItem(
+        type="异文",
+        original="豫章故郡",
+        suggested="南昌故郡",
+        reason="别本作「南昌故郡」，与「洪都新府」对文，据通行本取「豫章」",
+        confidence=0.65,
+    )
+    assert item.suggested == "南昌故郡"
+    assert item.original != item.suggested
+
+
+def test_collate_prompt_in_use_is_v2() -> None:
+    """Prompt 换版时提醒同步改回归集与本文档；这里守住调用方引用。"""
+    from server.routers.collate import COLLATE_PROMPT
+
+    assert COLLATE_PROMPT == "collate_v2"

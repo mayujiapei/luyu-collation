@@ -31,7 +31,7 @@ from ..utils.schemas import (
 
 router = APIRouter()
 
-COLLATE_PROMPT = "collate_v1"
+COLLATE_PROMPT = "collate_v2"
 TRANSLATE_PROMPT = "translate_text_v1"
 
 # produceTranslation=false 时替换掉译文子 Prompt，保持 JSON 输出形状不变
@@ -93,8 +93,9 @@ def _build_prompts(payload: CollateRequest) -> tuple[str, str]:
 def _to_collation_items(envelope: ModelOutputEnvelope, text: str) -> tuple[list[CollationItem], int]:
     """逐条校验模型建议，返回 (可用条目, 被丢弃条数)。
 
-    丢弃的三种情况：不合 schema、original 不是原文子串（API.md §2 硬约束）、
-    完全重复的建议（同一处同建议只留一条，避免卡片刷屏）。
+    丢弃的情况与 API.md §2 一致：不合 schema（类型不在五类内、缺理由、置信度越界、
+    `suggested` 与 `original` 相同的空操作）、`original` 不是原文子串、
+    与已有条目完全重复（同一处同建议只留一条，避免卡片刷屏）。
     """
     dropped = 0
     seen: set[tuple[str, str, str]] = set()
