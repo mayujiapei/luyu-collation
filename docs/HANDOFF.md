@@ -32,9 +32,15 @@
 - 前端：Vue 3 + Vite，4 个路由页；opencc-js 繁简转换可用；TranslatorWidget（划词释义悬浮球）、GujiUpload、AnnotationTooltip 组件已有 UI。
 - 数据层已接真实接口：`src/api/client.js`（统一 baseURL/超时/错误结构）、`src/stores/collation.js`（原文/建议/译文/决策/时间线）、`src/utils/collationNote.js`（校勘记体例，纯规则）。Pinia 已在 `main.js` 中启用。
 - 后端：`server/`（FastAPI，端口 3001）已有 `POST /api/v1/collate` 与 `GET /api/v1/health`；模型输出过 pydantic 双闸门，`original` 非原文子串的条目丢弃并计入 `droppedCount`，契约外的脏数据不进 UI。
-- Prompt 资产：`server/prompts/` 下 `collate_v1.md`、`translate_text_v1.md`、`explain_v1.md`；回归集 8 段在 `server/prompts/regression/`。
-- 测试：后端 pytest 37 项（`server/tests/`）、前端 vitest 31 项（测试文件跟随源码放置）；
-  另有 Prompt 回归集执行器 `server/tests/run_regression.py`（需真实密钥，会真实调用）。
+- Prompt 资产：`server/prompts/` 下 **`collate_v2.md`（当前生效）**、`collate_v1.md`（留档供回归对比）、
+  `translate_text_v1.md`、`explain_v1.md`；回归集在 `server/prompts/regression/`
+  （**`collation_cases_v2.json` 9 例**为当前版本，v1 保留）。
+  v2 相对 v1 只收紧了一处：`suggested` 必须与 `original` 不同、异文类必须填别本异文写法——
+  起因是真实模型把别本写法只写进理由，导致卡片显示成 `X → X`、校勘记生成「一作 X」的自指句。
+  细节见 TECH_DESIGN §5；**别把它改回 v1**。
+- 测试：后端 pytest **40 项**（`server/tests/`）、前端 vitest **33 项**（测试文件跟随源码放置）；
+  另有 Prompt 回归集执行器 `server/tests/run_regression.py`（需真实密钥，会真实调用；
+  `--cases` 可指定用例集、`--only`/`--verbose` 便于单例排查）。
 - 工程配置：`.env.example`、`requirements.txt` + `requirements-dev.txt`；`.gitignore` 已忽略 `.venv/` 与 `__pycache__/`。
 
 **仍未做**：
@@ -143,6 +149,22 @@ LLM_MODEL=mimo-v2.6-pro
 **若换回硅基流动**：其账号余额曾耗尽，所有调用返回 `HTTP 402 ... balance is insufficient`
 （前端表现为 `PROVIDER_MISCONFIGURED` 并带上游状态码，属预期行为）。该供应商配置在
 `.env` 里注释保留，充值后取消注释即可。
+
+### 第 1 步之后的增补（2026-10-08，同日）
+
+真实模型跑起来后暴露了一处契约缺陷，已修并发了 `collate_v2`：**异文类的 `suggested` 必须填
+别本异文写法**。原委：模型对《滕王阁序》「豫章故郡」作答时把别本写法（「南昌故郡」）只写进
+`reason`，`suggested` 填成与底本相同——卡片成 `X → X` 空操作，校勘记写出「一作 X」的自指句，
+阶段二要给对校引擎的异文清单也无从结构化。
+
+修法是三层，缺一不可（只加过滤会把证据藏起来、模型行为其实没变）：
+Prompt 层（`collate_v2`）、schema 闸门（`suggested == original` 丢弃并计 `droppedCount`）、
+体例兜底（`collationNote.renderEntry` 退化为纯标注）。验证方式见 §8 的回归集用法。
+
+**一条留给 `EVAL.md` 的口径**：模型会主动补报注入错误之外的合法校勘点（reg-006 报出
+「「冥」通「溟」」——《庄子》「北冥」的经典训释，属真学问），也会在异文上偏积极
+（曾报出 `地接衡庐 → 地连衡庐`，据我们所知非通行异文，但置信度只有 0.6 会折叠）。
+这两类若按误报计会低估 precision，**异文类尤其需要"版本依据"这一判定档**。
 
 ## 8. 环境备忘
 
