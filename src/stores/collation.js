@@ -23,7 +23,9 @@ export const DEFAULT_REFERENCE_EDITION = '通行本'
 
 /** 错误码 -> 给用户的处理建议（message 用后端返回的那条，这里只补「怎么办」）。 */
 const ERROR_HINTS = {
-  PROVIDER_MISCONFIGURED: '请在仓库根目录的 .env 中填写 LLM_API_KEY（可参考 .env.example），填好即时生效、无需重启后端。',
+  // 这个码同时覆盖「缺密钥」与「上游不可用（密钥无效/余额不足/5xx）」，
+  // 所以建议要把两种情况都点到，不能只说「去填密钥」——否则余额不足时用户会白找一遍
+  PROVIDER_MISCONFIGURED: '请确认 .env 中的 LLM_API_KEY 已填写且有效，并确认模型账号的余额或额度充足（可参考 .env.example）。',
   LLM_TIMEOUT: '请稍后重试，或缩短待校勘文本。',
   LLM_BAD_JSON: '大模型输出未通过契约校验，已整条拦截、未渲染脏数据。请重试。',
   RATE_LIMITED: '请稍候再试。',
