@@ -80,6 +80,7 @@ requirements.txt      # fastapi, uvicorn, pydantic, httpx
 ```
 
 - 环境变量：`LLM_PROVIDER`、`LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`、`OCR_API_KEY`、`OCR_SECRET_KEY`、`PORT`（默认 3001，与 API.md 约定一致）。
+- Prompt 与端点映射：`collate_v1.md` → `POST /api/v1/collate`（校勘结果与白话译文一次返回）；`translate_text_v1.md` → `/collate` 的译文子 Prompt（`options.produceTranslation=true` 时拼入主调用，**无独立翻译端点**）；`explain_v1.md` → `POST /api/v1/translate`（划词释义）。
 - 运行：依赖装在独立虚拟环境（`python -m venv .venv && pip install -r requirements.txt`）；启动 `uvicorn server.main:app --reload --port 3001`；根 `package.json` 增加便捷脚本 `"dev:server": "uvicorn server.main:app --reload --port 3001"`，仅为统一命令入口，Python 依赖不进 npm。
 - 阶段二预留：检索与微调依赖（sentence-transformers、milvus-lite 等）届时追加到 requirements.txt，不影响阶段一启动。
 
@@ -104,7 +105,7 @@ requirements.txt      # fastapi, uvicorn, pydantic, httpx
 
 **自校验清单放进 user prompt 尾部**：建议必须可在原文中定位；不确定时降低置信度而非硬改；通假只标注不替换（文献学惯例，这本身就是方案里的学科适配亮点）。
 
-**置信度修正（confidence.js）**：命中通假字表/形近字表 +0.1；模型置信度 <0.7 的建议默认折叠到"低置信"分组，不进一键采纳。
+**置信度修正（services/confidence.py）**：命中通假字表/形近字表 +0.1；模型置信度 <0.7 的建议默认折叠到"低置信"分组，不进一键采纳。
 
 ## 6. 校勘记体例生成（F4，差异化卖点）
 
