@@ -113,6 +113,8 @@
   `npm test`（前端 vitest）、`.venv/Scripts/python -m pytest server/tests`（后端 pytest）。
 - 需要的密钥（放 `.env`，参照 `.env.example` 与 TECH_DESIGN §4）：`LLM_API_KEY` 必需；
   `OCR_API_KEY`/`OCR_SECRET_KEY` 在做 F7 时才需要。
+  填好后**无需重启后端**即生效（配置按请求重读 .env；真实环境变量优先级高于 .env）。
+  密钥只在服务端使用，前端产物中不含其值——已用探针密钥实测确认。
 - 前端 5173、后端 3001；跨域由 FastAPI CORS 处理（已允许 5173 与 4173 的本机来源）。
 - **无真实密钥时的离线联调**：见 `server/tests/README.md`（启动假模型端点、指定环境变量、
   预期返回值与各故障分支的完整步骤）。

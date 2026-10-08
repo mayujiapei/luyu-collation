@@ -36,8 +36,18 @@ def _strip_quotes(value: str) -> str:
     return value
 
 
+# 记录「由 .env 注入」的键。这些键跟着文件走，每次读取都按文件刷新，从而支持
+# 改完 .env 不重启进程即生效；不在集合里的键属于真实环境变量，优先级更高，永不被 .env 覆盖。
+_env_file_keys: set[str] = set()
+
+
 def load_env_file(path: Path | None = None) -> None:
-    """把 .env 读进 os.environ（不覆盖已存在的真实环境变量）。
+    """把 .env 读进 os.environ，优先级：真实环境变量 > .env。
+
+    关键点：不要用 os.environ.setdefault。`.env.example` 里写的是 `LLM_API_KEY=`（空值），
+    复制成 .env 后 setdefault 会把空字符串钉在环境里，之后再往 .env 里填真实密钥就不会生效，
+    表现为一直报「未配置大模型密钥」——这正是最容易被误判成"密钥填错了"的坑。
+    这里改为记住哪些键来自 .env，每次都按文件刷新。
 
     支持的语法：空行、`#` 注释、`export KEY=VALUE`、值两侧的成对引号。
     path 在调用时解析（而非默认参数绑定），方便测试把 ENV_FILE 指到不存在的路径。
@@ -55,8 +65,15 @@ def load_env_file(path: Path | None = None) -> None:
         if not sep:
             continue
         key = key.strip()
-        if key:
-            os.environ.setdefault(key, _strip_quotes(value.strip()))
+        if not key:
+            continue
+        value = _strip_quotes(value.strip())
+        if key in _env_file_keys:
+            os.environ[key] = value
+        elif key not in os.environ:
+            os.environ[key] = value
+            _env_file_keys.add(key)
+        # 否则：该键来自真实环境变量，优先级更高，忽略 .env 里的值
 
 
 @dataclass(frozen=True)

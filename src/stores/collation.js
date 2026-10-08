@@ -23,7 +23,7 @@ export const DEFAULT_REFERENCE_EDITION = '通行本'
 
 /** 错误码 -> 给用户的处理建议（message 用后端返回的那条，这里只补「怎么办」）。 */
 const ERROR_HINTS = {
-  PROVIDER_MISCONFIGURED: '请在仓库根目录的 .env 中填写 LLM_API_KEY 后重启后端（可参考 .env.example）。',
+  PROVIDER_MISCONFIGURED: '请在仓库根目录的 .env 中填写 LLM_API_KEY（可参考 .env.example），填好即时生效、无需重启后端。',
   LLM_TIMEOUT: '请稍后重试，或缩短待校勘文本。',
   LLM_BAD_JSON: '大模型输出未通过契约校验，已整条拦截、未渲染脏数据。请重试。',
   RATE_LIMITED: '请稍候再试。',
