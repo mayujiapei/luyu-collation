@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from dataclasses import dataclass
@@ -109,25 +110,38 @@ async def complete_json(
     }
 
     started = time.perf_counter()
-    async with httpx.AsyncClient(timeout=settings.request_timeout_s) as client:
-        try:
-            response = await client.post(
-                url, headers=headers, json=_build_payload(settings, system_prompt, user_prompt, force_json=True)
-            )
-            # 少数 OpenAI 兼容端点不认 response_format，直接 400；
-            # Prompt 本身已强约束 JSON 输出，去掉该参数重试一次即可兼容。
-            if response.status_code == 400 and "response_format" in response.text:
-                response = await client.post(
-                    url,
-                    headers=headers,
-                    json=_build_payload(settings, system_prompt, user_prompt, force_json=False),
-                )
-        except httpx.TimeoutException as exc:
-            raise ApiError(
-                LLM_TIMEOUT, f"大模型响应超时（超过 {int(settings.request_timeout_s)} 秒）"
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise ApiError(PROVIDER_MISCONFIGURED, f"无法连接大模型服务：{exc}") from exc
+    try:
+        # 外层再套一个**硬性总时限**。httpx 的 timeout 是「相邻两次读取之间的间隔」超时，
+        # 不是总耗时上限：上游若边生成边吐字节（分块传输），间隔始终小于阈值，总耗时就能
+        # 无限拉长——实测遇到过一次 367 字跑了 900 多秒才失败（当时设定上限只有 30 秒），
+        # 违背 PRD §5「响应 ≤30s」。asyncio.timeout 以取消的方式兜住，才是真正的上限。
+        async with asyncio.timeout(settings.request_timeout_s):
+            async with httpx.AsyncClient(timeout=settings.request_timeout_s) as client:
+                try:
+                    response = await client.post(
+                        url,
+                        headers=headers,
+                        json=_build_payload(settings, system_prompt, user_prompt, force_json=True),
+                    )
+                    # 少数 OpenAI 兼容端点不认 response_format，直接 400；
+                    # Prompt 本身已强约束 JSON 输出，去掉该参数重试一次即可兼容。
+                    if response.status_code == 400 and "response_format" in response.text:
+                        response = await client.post(
+                            url,
+                            headers=headers,
+                            json=_build_payload(settings, system_prompt, user_prompt, force_json=False),
+                        )
+                except httpx.TimeoutException as exc:
+                    raise ApiError(
+                        LLM_TIMEOUT, f"大模型响应超时（超过 {int(settings.request_timeout_s)} 秒）"
+                    ) from exc
+                except httpx.HTTPError as exc:
+                    raise ApiError(PROVIDER_MISCONFIGURED, f"无法连接大模型服务：{exc}") from exc
+    except TimeoutError as exc:
+        # asyncio.timeout 触发（Python 3.11 起 asyncio.TimeoutError 即内置 TimeoutError）
+        raise ApiError(
+            LLM_TIMEOUT, f"大模型响应超时（超过 {int(settings.request_timeout_s)} 秒）"
+        ) from exc
 
     elapsed_ms = int((time.perf_counter() - started) * 1000)
 

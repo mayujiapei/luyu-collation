@@ -33,11 +33,11 @@ import json
 import time
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 app = FastAPI(title="本地假模型端点（联调/测试专用）")
 
-_MODE_BY_MODEL_KEYWORD = ("badjson", "schemafail", "timeout", "error500")
+_MODE_BY_MODEL_KEYWORD = ("badjson", "schemafail", "timeout", "dribble", "error500")
 
 # 联调样例文本：人工拼凑的测试串（**不是真实文献**），只为让下面的固定条目有落点。
 # 用它喂 POST /collate 时，期望结果为 kept=4 / dropped=4，且置信度经规则修正：
@@ -162,6 +162,20 @@ def _envelope(content: str, model: str) -> dict:
     }
 
 
+# 每秒吐一点、总共吐 10 次的响应。用来复现「上游边生成边吐字节」的场景：
+# httpx 的 read timeout 是相邻两次读取的间隔超时，间隔始终小于阈值 → 它永远不触发，
+# 总耗时可以无限拉长。只有外层硬性总时限（asyncio.timeout）才拦得住。
+# 故意只吐 10 次而不无限吐：万一总时限失效，测试会失败而不是永久挂住。
+_DRIBBLE_TICKS = 10
+
+
+async def _dribble_stream():
+    body = json.dumps(_envelope("", "fake-dribble"))
+    for _ in range(_DRIBBLE_TICKS):
+        yield body.encode("utf-8")
+        await asyncio.sleep(1)
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     body = await request.json()
@@ -179,6 +193,8 @@ async def chat_completions(request: Request):
         return JSONResponse(
             _envelope(json.dumps({"items": "不是数组", "translation": ""}, ensure_ascii=False), model)
         )
+    if mode == "dribble":
+        return StreamingResponse(_dribble_stream(), media_type="text/event-stream")
     return JSONResponse(_envelope(_FIXTURE_BODY, model))
 
 

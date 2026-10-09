@@ -256,6 +256,34 @@ def test_upstream_timeout_maps_to_llm_timeout(fake_provider: str) -> None:
     assert excinfo.value.code == "LLM_TIMEOUT"
 
 
+def test_dribbling_upstream_still_hits_hard_deadline(fake_provider: str) -> None:
+    """上游边生成边吐字节时，httpx 的「间隔超时」拦不住，必须由外层硬性总时限兜住。
+
+    实测来源：367 字的一次请求在设定 30 秒上限的情况下跑了 900 多秒才失败，违背
+    PRD §5「响应 ≤30s」——因为 httpx 的 read timeout 衡量的是相邻两次读取之间的间隔。
+    这里把上限设成 2 秒，假模型每秒吐一点、共吐 10 次（约 10 秒才自然结束）。
+    """
+    settings = Settings(
+        llm_provider="qwen",
+        llm_api_key="fake-key",
+        llm_base_url=fake_provider,
+        llm_model="fake-dribble",
+        ocr_api_key="",
+        ocr_secret_key="",
+        port=3001,
+        request_timeout_s=2.0,
+    )
+    started = time.monotonic()
+    with pytest.raises(ApiError) as excinfo:
+        asyncio.run(complete_json(settings=settings, system_prompt="s", user_prompt="u"))
+    elapsed = time.monotonic() - started
+
+    assert excinfo.value.code == "LLM_TIMEOUT"
+    # 关键断言：必须是总时限（约 2 秒）拦下的，而不是等流自己吐完（约 10 秒）才失败。
+    # 若这里失败，说明总时限没生效，慢上游又能把请求挂住十几分钟。
+    assert elapsed < 6, f"硬性总时限没生效，耗时 {elapsed:.1f}s"
+
+
 # ---------------------------------------------------------------------------
 # Prompt 资产
 # ---------------------------------------------------------------------------
