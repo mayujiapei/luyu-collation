@@ -204,11 +204,13 @@ const startCollation = async () => {
     return
   }
 
-  // 真实调用 POST /api/v1/collate；成功才跳转，失败留在本页显示原因（不白屏）
-  const ok = await store.submitText(text, { produceTranslation: true })
-  if (ok) {
-    router.push('/collation')
-  }
+  // 真实调用 POST /api/v1/collate（长文本会按句读分段、并发提交）。
+  // 这里**不 await 再跳转**：分段校勘是个持续几十秒到数分钟的过程，
+  // 结果是逐段到货的，必须让用户在校勘台上看着它一段段出来，
+  // 而不是停在首页干等全部算完（那样渐进呈现就白做了）。
+  // submitText 内部已捕获所有异常并写入 store.error，故不会抛出未处理的 rejection。
+  store.submitText(text, { produceTranslation: true })
+  router.push('/collation')
 }
 </script>
 

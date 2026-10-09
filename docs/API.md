@@ -11,7 +11,7 @@
 | `TEXT_TOO_LONG` | 413 | 文本超过 5000 字 |
 | `INVALID_REQUEST` | 400 | 参数/schema 校验失败 |
 | `OCR_FAILED` | 502 | OCR 服务失败 |
-| `LLM_TIMEOUT` | 504 | 大模型超时（>30s） |
+| `LLM_TIMEOUT` | 504 | 大模型超时（单次调用硬性总时限 60s） |
 | `LLM_BAD_JSON` | 502 | 模型输出未通过 JSON schema 校验（前端提示重试） |
 | `RATE_LIMITED` | 429 | 触发限流 |
 | `PROVIDER_MISCONFIGURED` | 500 | 模型通道不可用：密钥缺失、密钥无效，或上游返回 4xx/5xx、连不上 |

@@ -3,6 +3,9 @@
  *
  * 主链路的唯一数据来源：原文、AI 建议、译文、决策状态、修改时间线全部在这里，
  * 组件只读这里的数据，不再自带任何演示数据。
+ *
+ * 长文本走**分段流水线**（PRD §4）：按句读切段、限量并发、每段返回即刷新 items，
+ * 于是"校勘一部分就出来一部分"。接口契约不变，仍是多次普通 /collate 调用。
  */
 
 import { computed, ref } from 'vue'
@@ -10,16 +13,25 @@ import { defineStore } from 'pinia'
 
 import { ApiError, NETWORK_ERROR, collate as collateRequest } from '@/api/client'
 import { buildCollationNote, downloadTextFile, noteFilename } from '@/utils/collationNote'
+import {
+  MAX_CONCURRENCY,
+  mergeCollationItems,
+  rebaseItems,
+  splitTextIntoChunks,
+} from '@/utils/textChunks'
 
 /** 置信度低于此值的建议折叠为「低置信建议」，且不参与「全部采纳」（API.md §2）。 */
 export const LOW_CONFIDENCE_THRESHOLD = 0.7
 
-/** 单次校勘文本上限（PRD §5），与后端 MAX_TEXT_LEN 一致。 */
+/** 单次**调用**的文本上限（PRD §5），与后端 MAX_TEXT_LEN 一致。 */
 export const MAX_TEXT_LENGTH = 5000
 
 export const ALL_CHECK_TYPES = ['讹字', '衍文', '脱文', '通假', '异文']
 
 export const DEFAULT_REFERENCE_EDITION = '通行本'
+
+/** 草稿键：仅存浏览器本地，刷新/切页不丢工作；不是服务端持久化（PRD §4「明确不做」）。 */
+const DRAFT_KEY = 'guji:collation-draft:v1'
 
 /** 错误码 -> 给用户的处理建议（message 用后端返回的那条，这里只补「怎么办」）。 */
 const ERROR_HINTS = {
@@ -55,26 +67,48 @@ function toErrorInfo(error) {
   }
 }
 
+/** 读本地草稿；任何异常都当作没有草稿，不能因为缓存坏了就打不开页面。 */
+function readDraft() {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_KEY)
+    if (!raw) return null
+    const draft = JSON.parse(raw)
+    return draft && typeof draft.sourceText === 'string' ? draft : null
+  } catch {
+    return null
+  }
+}
+
 export const useCollationStore = defineStore('collation', () => {
+  const draft = readDraft()
+
+  /** 运行代次号：并发分段与「重新开始/再次提交」之间的竞态保护（见 runChunks）。 */
+  let activeRun = 0
+
   // --- state ---
-  const sourceText = ref('')
+  const sourceText = ref(draft?.sourceText ?? '')
   /** 每条：{ id, type, original, suggested, reason, confidence, offset, status } */
-  const items = ref([])
-  const translation = ref('')
-  const meta = ref({
-    requestId: '',
-    model: '',
-    elapsedMs: 0,
-    droppedCount: 0,
-    referenceEdition: DEFAULT_REFERENCE_EDITION,
-    checkTypes: [...ALL_CHECK_TYPES],
-    produceTranslation: true,
-  })
+  const items = ref(draft?.items ?? [])
+  const translation = ref(draft?.translation ?? '')
+  const meta = ref(
+    draft?.meta ?? {
+      requestId: '',
+      model: '',
+      elapsedMs: 0,
+      droppedCount: 0,
+      referenceEdition: DEFAULT_REFERENCE_EDITION,
+      checkTypes: [...ALL_CHECK_TYPES],
+      produceTranslation: true,
+      chunkCount: 0,
+    },
+  )
   /** 修改时间线：按时间正序存放，展示时倒序。 */
-  const history = ref([])
+  const history = ref(draft?.history ?? [])
   /** idle | loading | ready | error */
-  const status = ref('idle')
+  const status = ref(draft ? 'ready' : 'idle')
   const error = ref(null)
+  /** 分段进度：{ done, total }，total<=1 时视图不显示进度条 */
+  const progress = ref({ done: 0, total: 0 })
 
   // --- getters ---
   const pendingItems = computed(() => items.value.filter((item) => item.status === 'pending'))
@@ -94,10 +128,49 @@ export const useCollationStore = defineStore('collation', () => {
   const canExport = computed(() => acceptedItems.value.length > 0)
   /** 时间线倒序（最新在前），供视图直接渲染。 */
   const timeline = computed(() => [...history.value].reverse())
+  /** 分段进行中已有部分结果 —— 视图据此从「加载屏」切到「部分结果」。
+   *  这是「校勘一部分就出来一部分」的开关。 */
+  const hasPartialResult = computed(() => isLoading.value && items.value.length > 0)
+  /** 是否应展示工作台（而不是加载/错误/空态整屏）。 */
+  const showsWorkspace = computed(() => isReady.value || items.value.length > 0)
+  const progressText = computed(() =>
+    progress.value.total > 1 ? `已完成 ${progress.value.done}/${progress.value.total} 段` : '',
+  )
 
   // --- internals ---
   function pushHistory({ action, from = '', to = '', type = '' }) {
     history.value.push({ time: nowTime(), actor: '当前用户', action, from, to, type })
+    saveDraft()
+  }
+
+  /** 落草稿。只在有内容时写，避免把空态也存下来。 */
+  function saveDraft() {
+    try {
+      if (!sourceText.value) {
+        sessionStorage.removeItem(DRAFT_KEY)
+        return
+      }
+      sessionStorage.setItem(
+        DRAFT_KEY,
+        JSON.stringify({
+          sourceText: sourceText.value,
+          items: items.value,
+          translation: translation.value,
+          meta: meta.value,
+          history: history.value,
+        }),
+      )
+    } catch {
+      // 存不下（隐私模式/超额）也不能影响主流程，静默降级
+    }
+  }
+
+  function clearDraft() {
+    try {
+      sessionStorage.removeItem(DRAFT_KEY)
+    } catch {
+      /* 忽略 */
+    }
   }
 
   function validate(text) {
@@ -122,24 +195,13 @@ export const useCollationStore = defineStore('collation', () => {
     }
   }
 
-  function applyResult(text, response, options) {
+  function applyResult(text, options, chunkCount) {
     sourceText.value = text
-    items.value = (response.items ?? []).map((item) => ({ ...item, status: 'pending' }))
-    translation.value = response.translation ?? ''
-    meta.value = {
-      requestId: response.requestId ?? '',
-      model: response.model ?? '',
-      elapsedMs: response.elapsedMs ?? 0,
-      droppedCount: response.droppedCount ?? 0,
-      referenceEdition: options.referenceEdition,
-      checkTypes: options.checkTypes,
-      produceTranslation: options.produceTranslation,
-    }
-
+    meta.value = { ...meta.value, referenceEdition: options.referenceEdition, checkTypes: options.checkTypes, produceTranslation: options.produceTranslation, chunkCount }
     history.value = []
     pushHistory({
       action: 'AI 自动校勘',
-      from: `${text.length} 字原文`,
+      from: `${text.length} 字原文${chunkCount > 1 ? `（${chunkCount} 段）` : ''}`,
       to: `返回 ${items.value.length} 条建议`,
     })
     if (meta.value.droppedCount > 0) {
@@ -151,12 +213,72 @@ export const useCollationStore = defineStore('collation', () => {
     }
     status.value = 'ready'
     error.value = null
+    saveDraft()
+  }
+
+  /**
+   * 逐段跑完所有分段，限量并发；**每段到货就刷新 items**（这就是"一部分就出来一部分"）。
+   * 某段失败时不再派新段，但已到货的结果保留，并把失败信息交给调用方。
+   *
+   * runId 用来作废过期结果：分段是并发的，用户中途「重新开始」或再次提交时，
+   * 上一轮迟到的响应不能再写回 store，否则会把已清空的工作台又填上旧建议。
+   */
+  async function runChunks(chunks, options, runId) {
+    const groups = new Array(chunks.length)
+    const elapsed = []
+    let nextIndex = 0
+    let done = 0
+    let firstError = null
+
+    const isStale = () => runId !== activeRun
+    progress.value = { done: 0, total: chunks.length }
+
+    const publish = () => {
+      if (isStale()) return
+      items.value = mergeCollationItems(groups.filter(Boolean))
+    }
+
+    const worker = async () => {
+      while (firstError === null && nextIndex < chunks.length && !isStale()) {
+        const index = nextIndex
+        nextIndex += 1
+        const chunk = chunks[index]
+        try {
+          const response = await collateRequest(chunk.text, options)
+          if (isStale()) return // 这一轮已被作废，丢弃响应
+          groups[index] = rebaseItems(response.items, chunk.start)
+          elapsed.push(response.elapsedMs ?? 0)
+          if (!meta.value.requestId) meta.value.requestId = response.requestId ?? ''
+          meta.value.model = response.model || meta.value.model
+          meta.value.droppedCount += response.droppedCount ?? 0
+          if (response.translation) {
+            translation.value = translation.value ? `${translation.value}\n${response.translation}` : response.translation
+          }
+          done += 1
+          progress.value = { done, total: chunks.length }
+          publish() // 每段到货即渲染
+        } catch (caught) {
+          if (isStale()) return
+          firstError = caught
+        }
+      }
+    }
+
+    await Promise.all(
+      Array.from({ length: Math.min(MAX_CONCURRENCY, chunks.length) }, () => worker()),
+    )
+
+    if (isStale()) return { failed: null, done, total: chunks.length, stale: true }
+
+    publish()
+    meta.value.elapsedMs = elapsed.reduce((sum, value) => sum + value, 0)
+    return { failed: firstError, done, total: chunks.length, stale: false }
   }
 
   // --- actions ---
   /**
    * 提交原文去校勘。
-   * @returns {Promise<boolean>} 是否成功（失败时 error 已写好，调用方决定怎么提示）
+   * @returns {Promise<boolean>} 是否**全部**成功（部分成功时返回 false，但结果已进 store）
    */
   async function submitText(rawText, options = {}) {
     const text = String(rawText ?? '')
@@ -167,19 +289,49 @@ export const useCollationStore = defineStore('collation', () => {
       return false
     }
 
+    const resolvedOptions = buildOptions(options)
+    const chunks = splitTextIntoChunks(text)
+    activeRun += 1
+    const runId = activeRun
+
+    // 重新开始一次校勘：清掉上一轮结果，避免新旧混在一起
+    items.value = []
+    translation.value = ''
+    history.value = []
+    meta.value = {
+      requestId: '',
+      model: '',
+      elapsedMs: 0,
+      droppedCount: 0,
+      referenceEdition: resolvedOptions.referenceEdition,
+      checkTypes: resolvedOptions.checkTypes,
+      produceTranslation: resolvedOptions.produceTranslation,
+      chunkCount: chunks.length,
+    }
+    sourceText.value = text
     status.value = 'loading'
     error.value = null
-    const resolvedOptions = buildOptions(options)
 
-    try {
-      const response = await collateRequest(text, resolvedOptions)
-      applyResult(text, response, resolvedOptions)
-      return true
-    } catch (caught) {
-      error.value = toErrorInfo(caught)
+    const { failed, done, total, stale } = await runChunks(chunks, resolvedOptions, runId)
+
+    if (stale) return false // 这一轮已被「重新开始」或新提交取代，不要回写任何状态
+
+    if (failed) {
+      const info = toErrorInfo(failed)
+      error.value = {
+        ...info,
+        message:
+          total > 1
+            ? `已完成 ${done}/${total} 段，后续分段失败：${info.message}`
+            : info.message,
+      }
       status.value = 'error'
+      saveDraft() // 部分结果也存下来，别让用户白等
       return false
     }
+
+    applyResult(text, resolvedOptions, chunks.length)
+    return true
   }
 
   function accept(id) {
@@ -242,14 +394,16 @@ export const useCollationStore = defineStore('collation', () => {
     if (status.value === 'error') status.value = 'idle'
   }
 
-  /** 清空全部状态（首页重新开始时调用）。 */
+  /** 清空全部状态（首页重新开始时调用），同时丢弃本地草稿并作废在途分段。 */
   function reset() {
+    activeRun += 1 // 让并发中的分段结果失效，否则迟到的响应会把工作台又填上
     sourceText.value = ''
     items.value = []
     translation.value = ''
     history.value = []
     status.value = 'idle'
     error.value = null
+    progress.value = { done: 0, total: 0 }
     meta.value = {
       requestId: '',
       model: '',
@@ -258,7 +412,9 @@ export const useCollationStore = defineStore('collation', () => {
       referenceEdition: DEFAULT_REFERENCE_EDITION,
       checkTypes: [...ALL_CHECK_TYPES],
       produceTranslation: true,
+      chunkCount: 0,
     }
+    clearDraft()
   }
 
   return {
@@ -270,6 +426,7 @@ export const useCollationStore = defineStore('collation', () => {
     history,
     status,
     error,
+    progress,
     // getters
     pendingItems,
     acceptedItems,
@@ -280,6 +437,9 @@ export const useCollationStore = defineStore('collation', () => {
     isLoading,
     canExport,
     timeline,
+    hasPartialResult,
+    showsWorkspace,
+    progressText,
     // actions
     submitText,
     accept,

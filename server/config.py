@@ -27,7 +27,11 @@ PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
 }
 
 DEFAULT_PORT = 3001
-REQUEST_TIMEOUT_S = 30.0
+# 单次大模型调用的硬性总时限。原为 30 秒，实测发现不可行：
+# 同一供应商的延迟波动达 2~4 倍（158 字实测 17.8s，而 120 字的另一段超过 30s），
+# 30 秒会把正常调用误杀。分段之后用户看到的是"首段到货时间"，
+# 单段上限放宽到 60 秒既保住防挂死能力，又不误杀。（PRD §5 已同步修订）
+REQUEST_TIMEOUT_S = 60.0
 
 
 def _strip_quotes(value: str) -> str:

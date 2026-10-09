@@ -16,12 +16,17 @@
       <button v-if="hasAnyState" class="btn-toggle" @click="restart">重新开始</button>
     </div>
 
-    <!-- 状态屏：加载中 / 失败 / 未提交 -->
-    <div v-if="!isReady" class="state-screen">
+    <!-- 状态屏：加载中 / 失败 / 未提交。
+         注意判据是 showsWorkspace 而不是 isReady —— 分段进行中一旦有结果到货，
+         就该切到工作台显示"已出来的那部分"，而不是继续整屏转圈。 -->
+    <div v-if="!store.showsWorkspace" class="state-screen">
       <template v-if="isLoading">
         <div class="state-icon spinner">⏳</div>
         <h3 class="state-title">正在调用大模型校勘…</h3>
-        <p class="state-text">单次校勘通常在 30 秒内返回，请勿关闭页面。</p>
+        <p class="state-text">
+          {{ store.progressText || '单次调用通常在 30 秒内返回。' }}
+          <template v-if="store.progressText">长文本按句读分段提交，每段返回即显示。</template>
+        </p>
       </template>
 
       <template v-else-if="hasError">
@@ -45,6 +50,17 @@
     </div>
 
     <template v-else>
+      <!-- 分段进度 / 部分失败提示：有结果时也保留在工作台上方 -->
+      <div v-if="store.isLoading" class="progress-banner">
+        <span class="spinner-inline">⏳</span>
+        正在逐段校勘…{{ store.progressText }}
+        （已收到 {{ store.items.length }} 条建议，可先查看处理）
+      </div>
+      <div v-else-if="hasError" class="progress-banner is-error">
+        ⚠️ {{ store.error.message }}
+        <span v-if="store.error.hint" class="banner-hint">{{ store.error.hint }}</span>
+      </div>
+
       <!-- 核心双栏对照区 -->
       <div class="comparison-grid">
         <!-- 左侧：原文展示区 -->
@@ -253,7 +269,6 @@ const converter = OpenCC.Converter({ from: 'cn', to: 'tw' })
 /** 视图层统一做繁简转换；store 里始终保存原文，不因展示而改写数据 */
 const convert = (text) => (charMode.value === 'simplified' ? text : converter(text ?? ''))
 
-const isReady = computed(() => store.isReady)
 const isLoading = computed(() => store.isLoading)
 const hasError = computed(() => store.status === 'error' && !!store.error)
 const hasAnyState = computed(() => store.status !== 'idle' || store.items.length > 0)
@@ -373,6 +388,23 @@ function restart() {
 }
 
 .tool-spacer { flex: 1; }
+
+/* 分段进度 / 部分失败横条：有结果时也显示在工作台上方 */
+.progress-banner {
+  flex-shrink: 0;
+  padding: 9px 20px;
+  font-size: 13px;
+  color: #7a5b1e;
+  background: #fdf8ec;
+  border-bottom: 1px solid #f0e6cf;
+}
+.progress-banner.is-error {
+  color: #8a2b22;
+  background: #fdf3f2;
+  border-bottom-color: #f0d9d6;
+}
+.progress-banner .banner-hint { color: #7a5b1e; margin-left: 8px; }
+.spinner-inline { display: inline-block; animation: pulse 1.6s ease-in-out infinite; }
 
 .btn-toggle {
   padding: 4px 12px;

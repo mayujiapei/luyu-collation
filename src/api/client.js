@@ -7,9 +7,9 @@
 
 const BASE_URL = (import.meta.env.VITE_API_BASE || 'http://localhost:3001').replace(/\/+$/, '')
 
-// 后端自己的大模型超时是 30 秒（PRD §5）。前端留 35 秒，让后端先返回带明确
-// code 的 LLM_TIMEOUT，用户看到的才是「模型超时」而不是笼统的「请求超时」。
-const COLLATE_TIMEOUT_MS = 35_000
+// 后端单次大模型调用的硬性总时限是 60 秒（server/config.py）。前端再留 5 秒余量，
+// 让后端先返回带明确 code 的 LLM_TIMEOUT，用户看到的才是「模型超时」而不是笼统的「请求超时」。
+const COLLATE_TIMEOUT_MS = 65_000
 const HEALTH_TIMEOUT_MS = 5_000
 
 /** 前端自定义码（后端错误码之外的网络层失败，同一命名空间便于 UI 统一分支） */

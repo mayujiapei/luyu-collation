@@ -50,18 +50,35 @@
 | `src/utils/collationNote.js`（新增） | 校勘记体例生成器（见 §6） |
 | `.env.example` | `VITE_API_BASE=http://localhost:3001` |
 
-不改：路由、样式体系、opencc 转换逻辑、History/About 页（演示期间可隐藏入口）。
-例外（实施时发现确有问题才动，共两处）：工作台 `.workspace-container` 用 `height: 100vh` 套在
+不改：路由、样式体系、opencc 转换逻辑、About 页。
+例外（实施时发现确有问题才动，共三处）：工作台 `.workspace-container` 用 `height: 100vh` 套在
 顶栏与 `main-content` 内边距之内，会把工具栏挤出首屏、加载/错误状态屏也偏出可视区，
 改为按可用高度计算；`.btn-start` 的 hover `translateY` 会让元素在悬停时持续位移，
-触发自动化点击的稳定性重试，改为阴影反馈。
+触发自动化点击的稳定性重试，改为阴影反馈；`HistoryView.vue` 原本是带 2023 年假数据的脚手架、
+「查看报告」按钮**没绑任何事件**（评委一点就露馅），改为展示**本次会话**的真实校勘结果并接上跳转，
+假数据删除（跨会话历史仍需阶段二的持久化，见 PRD §4「明确不做」）。
 
 **实施状态（2026-10-08）**：上表除 `TranslatorWidget.vue` 外均已落地——该组件的 `mockDict`
-仍待 F6 接入 `POST /api/v1/translate`。另记两处实现取舍：
+仍待 F6 接入 `POST /api/v1/translate`。另记三处实现取舍：
 `src/api/client.js` 的前端超时取 35s（比后端的 30s 略长），让后端先返回带明确 code 的
 `LLM_TIMEOUT`，用户看到的是"模型超时"而不是笼统的"请求超时"；
 `src/stores/collation.js` 把「置信度 < 0.7 不参与全部采纳」实现为 `acceptAll` 只覆盖高置信条目，
 低置信条目仍可单独采纳。
+
+**文本分段流水线（2026-10-09 增补）**：新增 `src/utils/textChunks.js`，`src/stores/collation.js`
+的 `submitText` 改为分段并发流水线（详见 PRD §4「文本分段提交」）。要点：
+
+- 切分按**句读边界**（。！？；换行，过长时退到逗号/顿号），不重叠，保证首尾相接、不丢字；
+- 并发度 3，段数上限 50，段大小 = max(100 字, 全文/50)；单次调用硬性总时限 60s
+  （`server/config.py` 的 `REQUEST_TIMEOUT_S`，前端超时取 65s 让后端先报明确错误码）；
+- **每段返回即调 `mergeCollationItems` 刷新 `items`**，所以第一段到货就可见——这是"一部分就出来一部分"
+  的实现点；视图据此用 `showsWorkspace`（有结果即可）而非 `isReady`（全部完成）来切换显示；
+- 段内 `offset` 由 `rebaseItems` 加上该段起点搬到全文坐标系；跨段重复建议按
+  「类型+原文+建议」去重；
+- 引入运行代次号 `activeRun` 作废过期结果，避免「重新开始」之后迟到的分段响应把工作台又填上；
+- 某段失败时**保留已到货结果**并把完成进度写进错误消息，不清空用户已看到的内容；
+- 草稿存 `sessionStorage`（键 `guji:collation-draft:v1`），刷新/切页不丢工作。
+  注意这只是浏览器本地暂存，**不是服务端持久化**，与 PRD §4「明确不做」不冲突。
 
 ## 4. 后端结构（Python + FastAPI）
 

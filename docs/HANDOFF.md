@@ -30,7 +30,7 @@
 
 **已有（F1–F3 主链路已打通）**：
 - 前端：Vue 3 + Vite，4 个路由页；opencc-js 繁简转换可用；TranslatorWidget（划词释义悬浮球）、GujiUpload、AnnotationTooltip 组件已有 UI。
-- 数据层已接真实接口：`src/api/client.js`（统一 baseURL/超时/错误结构）、`src/stores/collation.js`（原文/建议/译文/决策/时间线）、`src/utils/collationNote.js`（校勘记体例，纯规则）。Pinia 已在 `main.js` 中启用。
+- 数据层已接真实接口：`src/api/client.js`（统一 baseURL/超时/错误结构）、`src/stores/collation.js`（原文/建议/译文/决策/时间线 + **分段流水线** + 草稿缓存）、`src/utils/collationNote.js`（校勘记体例，纯规则）、`src/utils/textChunks.js`（按句读切段）。Pinia 已在 `main.js` 中启用。
 - 后端：`server/`（FastAPI，端口 3001）已有 `POST /api/v1/collate` 与 `GET /api/v1/health`；模型输出过 pydantic 双闸门，`original` 非原文子串的条目丢弃并计入 `droppedCount`，契约外的脏数据不进 UI。
 - Prompt 资产：`server/prompts/` 下 **`collate_v2.md`（当前生效）**、`collate_v1.md`（留档供回归对比）、
   `translate_text_v1.md`、`explain_v1.md`；回归集在 `server/prompts/regression/`
@@ -38,14 +38,14 @@
   v2 相对 v1 只收紧了一处：`suggested` 必须与 `original` 不同、异文类必须填别本异文写法——
   起因是真实模型把别本写法只写进理由，导致卡片显示成 `X → X`、校勘记生成「一作 X」的自指句。
   细节见 TECH_DESIGN §5；**别把它改回 v1**。
-- 测试：后端 pytest **40 项**（`server/tests/`）、前端 vitest **33 项**（测试文件跟随源码放置）；
+- 测试：后端 pytest **41 项**（`server/tests/`）、前端 vitest **57 项**（测试文件跟随源码放置）；
   另有 Prompt 回归集执行器 `server/tests/run_regression.py`（需真实密钥，会真实调用；
   `--cases` 可指定用例集、`--only`/`--verbose` 便于单例排查）。
 - 工程配置：`.env.example`、`requirements.txt` + `requirements-dev.txt`；`.gitignore` 已忽略 `.venv/` 与 `__pycache__/`。
 
 **仍未做**：
 - `server/routers/ocr.py`、`server/routers/translate.py`、`server/routers/export_note.py`，以及 `server/services/ocr.py`、`server/services/note_template.py` 均未创建——分别属 F7 / F6 / F4 的服务端部分。
-- 前端 `TranslatorWidget.vue` 仍是 `mockDict` 硬编码（F6）；`HistoryView.vue` 仍是硬编码演示记录（阶段一无持久化，且 TECH_DESIGN §3 明确本阶段不改该页；演示前按 §6 隐藏入口）。
+- 前端 `TranslatorWidget.vue` 仍是 `mockDict` 硬编码（F6）——**这是最后一个还没接真实数据的界面元素**。
 - EVAL 标注规范、问卷模板仍未写（deadline 见 §6）；EVAL 还需给出「模型额外报出的合法校勘点」
   如何判定（否则会低估 precision，见 §7 观察 1）。
 
@@ -166,6 +166,41 @@ Prompt 层（`collate_v2`）、schema 闸门（`suggested == original` 丢弃并
 （曾报出 `地接衡庐 → 地连衡庐`，据我们所知非通行异文，但置信度只有 0.6 会折叠）。
 这两类若按误报计会低估 precision，**异文类尤其需要"版本依据"这一判定档**。
 
+### 第 1 步之后的增补（2026-10-09）：分段校勘与超时修订
+
+用户反馈"校勘太慢，能不能一部分一部分出"，实测确认这**不是体验优化而是必需品**：
+单次调用耗时随文本长度超线性增长（`mimo-v2.6-pro`：55 字 8.9s / 158 字 17.8s /
+367 字 938.8s 超时），且同一供应商延迟波动 2~4 倍。
+
+已做（详见 TECH_DESIGN §3、PRD §4）：
+
+1. **前端分段流水线**：`src/utils/textChunks.js` 按句读边界切段（目标 100 字、上限 50 段），
+   `stores/collation.js` 并发 3 逐段调 `/collate`，**每段到货即渲染**。实测 147 字分两段，
+   ~21 秒时界面已出现"已完成 1/2 段（已收到 1 条建议）"+ 1 张卡，53 秒全部完成（4 条建议）。
+   接口契约未变。
+2. **单次调用硬性总时限 30s → 60s**（`server/config.py`，前端超时同步 65s）。
+   原 30s 会把正常调用误杀（实测同一批里一段 21s、另一段 53s）；放宽的依据是分段后
+   用户感知的是"首段到货时间"，而总时限仍需防挂死。
+3. **超时必须是硬上限**：httpx 的 read timeout 只衡量相邻两次读取的间隔，
+   上游边生成边吐字节时它永不触发（实测 938 秒才失败）。加 `asyncio.timeout` 兜住，
+   并用假模型 `fake-dribble` 模式 + 测试锁死。
+4. **草稿缓存**：`sessionStorage`（键 `guji:collation-draft:v1`），刷新/切页不再丢工作。
+   这只是浏览器本地暂存，不是服务端持久化，与 PRD §4「明确不做」不冲突。
+5. **HomeView 立即跳转**：原先 `await submitText` 之后才跳转，分段后会让人停在首页干等全部分段
+   算完——渐进呈现等于白做。改为提交后立刻跳 /collation，由校勘台逐段呈现。
+6. **HistoryView 去假数据**：原表格是 2023 年假记录、「查看报告」没绑事件（评委一点就露馅），
+   改为展示本次会话的真实结果并接上跳转。
+
+**踩坑记录（下次省时间）**：
+- **后端改了代码务必确认 reload 真发生**。实测 watchfiles 会把多个文件改动合并，
+  只报其中一个，结果是进程跑"改了一半"的旧代码，现象酷似代码 bug。
+- **Windows 上 uvicorn 进程树很绕**：reloader 父进程死后，子进程继续服务、
+  socket 句柄仍记在**死掉的父 PID** 名下；`taskkill` 会报"进程不存在"但端口仍通。
+  用 `Get-CimInstance Win32_Process` 按命令行含 `multiprocessing-fork` 找真正在服务的 PID。
+- **git push 失败先看代理**：本机配了 `http://127.0.0.1:7899`，代理没开时 push 报
+  `schannel: failed to receive handshake`；直连可通，用
+  `git -c http.proxy= -c https.proxy= push` 绕过即可（不要改全局配置）。
+
 ## 8. 环境备忘
 
 - Node ^22.18.0 / >=24.12.0；Python >= 3.11。
@@ -183,9 +218,5 @@ Prompt 层（`collate_v2`）、schema 闸门（`suggested == original` 丢弃并
 - 前端 5173、后端 3001；跨域由 FastAPI CORS 处理（已允许 5173 与 4173 的本机来源）。
 - **无真实密钥时的离线联调**：见 `server/tests/README.md`（启动假模型端点、指定环境变量、
   预期返回值与各故障分支的完整步骤）。
-- **改了后端代码后，务必确认 reload 真的发生了**（`npm run dev:server` 的日志里出现
-  `WatchFiles detected changes ... Reloading...`）。实测踩过一次：连续改多个文件时 watchfiles
-  只捕获到其中一个并合并处理，结果进程跑的是"改了一半"的旧代码——现象是前端表现与刚写完的
-  逻辑不符，却查不出代码问题。必要时直接重启后端（`taskkill` 掉监听 3001 的进程：
-  注意要杀的是 uvicorn reloader 的**子进程**，父进程死后 socket 句柄仍会记在父 PID 名下，
-  用 `Get-CimInstance Win32_Process` 按命令行含 `multiprocessing-fork` 找到真正在服务的那个）。
+- **改完后端代码要确认 reload 真的发生、以及 git push 失败先看代理**——
+  两条踩坑记录与排查命令见 §7 末尾（避免两处写重复，日后改一处漏一处）。
